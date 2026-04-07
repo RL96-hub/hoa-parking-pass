@@ -1,59 +1,42 @@
 import React, { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { format, isAfter, parseISO } from "date-fns";
-import { Search, Shield, Car, Clock3, BadgeDollarSign, Building2, RefreshCw } from "lucide-react";
+import { format, parseISO } from "date-fns";
+import { Search, RefreshCw } from "lucide-react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
 
 import { Layout } from "@/components/layout";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api, Pass } from "@/lib/supabase-db";
 
 function isPassActive(pass: Pass) {
-  return isAfter(parseISO(pass.expiresAt), new Date());
+  return new Date(pass.expiresAt).getTime() > Date.now();
 }
 
-function getStatusBadge(pass: Pass) {
-  if (!isPassActive(pass)) {
-    return <Badge variant="secondary">Expired</Badge>;
+function getUnitLabel(pass: Pass) {
+  if (pass.buildingNumber && pass.unitNumber) {
+    return `B${pass.buildingNumber}-${pass.unitNumber}`;
   }
 
-  if (pass.paymentStatus === "payment_required") {
-    return <Badge variant="destructive">Payment Required</Badge>;
+  if (pass.unitNumber) {
+    return `Unit ${pass.unitNumber}`;
   }
 
-  if (pass.paymentStatus === "paid") {
-    return <Badge className="bg-green-600 hover:bg-green-600">Paid</Badge>;
-  }
-
-  if (pass.paymentStatus === "waived") {
-    return <Badge className="bg-amber-500 hover:bg-amber-500">Waived</Badge>;
-  }
-
-  return <Badge className="bg-blue-600 hover:bg-blue-600">Active</Badge>;
-}
-
-function getTypeBadge(pass: Pass) {
-  if (pass.type === "party") {
-    return <Badge variant="outline">Party</Badge>;
-  }
-
-  if (pass.type === "paid") {
-    return <Badge variant="outline">Paid</Badge>;
-  }
-
-  return <Badge variant="outline">Free</Badge>;
+  return "Unknown";
 }
 
 export default function SecurityDashboardPage() {
   const [, setLocation] = useLocation();
-  const [search, setSearch] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const communityId = localStorage.getItem("communityId") || "";
   const communityName = localStorage.getItem("communityName") || "Community";
-  const communityCode = localStorage.getItem("communityCode") || "";
   const userType = localStorage.getItem("userType");
 
   React.useEffect(() => {
@@ -65,7 +48,6 @@ export default function SecurityDashboardPage() {
   const {
     data: passes = [],
     isLoading,
-    error,
     refetch,
     isFetching,
   } = useQuery({
@@ -78,203 +60,218 @@ export default function SecurityDashboardPage() {
   });
 
   const filteredPasses = useMemo(() => {
-    const term = search.trim().toLowerCase();
+    const term = searchTerm.trim().toLowerCase();
 
-    if (!term) return passes;
+    return passes.filter((p) => {
+      const unitStr = getUnitLabel(p).toLowerCase();
+      const searchMatch =
+        !term ||
+        p.vehicleSnapshot.licensePlate.toLowerCase().includes(term) ||
+        p.vehicleSnapshot.make.toLowerCase().includes(term) ||
+        p.vehicleSnapshot.model.toLowerCase().includes(term) ||
+        p.vehicleSnapshot.color.toLowerCase().includes(term) ||
+        (p.vehicleSnapshot.nickname || "").toLowerCase().includes(term) ||
+        unitStr.includes(term);
 
-    return passes.filter((pass) => {
-      const plate = pass.vehicleSnapshot.licensePlate?.toLowerCase() || "";
-      const make = pass.vehicleSnapshot.make?.toLowerCase() || "";
-      const model = pass.vehicleSnapshot.model?.toLowerCase() || "";
-      const color = pass.vehicleSnapshot.color?.toLowerCase() || "";
-      const nickname = pass.vehicleSnapshot.nickname?.toLowerCase() || "";
-      const payment = pass.paymentStatus.toLowerCase();
-      const type = pass.type.toLowerCase();
-      const building = (pass.buildingNumber || "").toLowerCase();
-      const unit = (pass.unitNumber || "").toLowerCase();
-      const unitLabel = `b${pass.buildingNumber || ""}-${pass.unitNumber || ""}`.toLowerCase();
+      if (!searchMatch) return false;
 
-      return (
-        plate.includes(term) ||
-        make.includes(term) ||
-        model.includes(term) ||
-        color.includes(term) ||
-        nickname.includes(term) ||
-        payment.includes(term) ||
-        type.includes(term) ||
-        building.includes(term) ||
-        unit.includes(term) ||
-        unitLabel.includes(term)
-      );
+      if (statusFilter === "active") return isPassActive(p);
+      if (statusFilter === "unpaid") return p.paymentStatus === "payment_required";
+      if (statusFilter === "expired") return !isPassActive(p);
+
+      return true;
     });
-  }, [passes, search]);
+  }, [passes, searchTerm, statusFilter]);
 
   const activePasses = useMemo(() => {
-    return passes.filter((pass) => isPassActive(pass));
+    return passes.filter((p) => isPassActive(p));
   }, [passes]);
 
-  const paymentRequiredCount = useMemo(() => {
-    return activePasses.filter((pass) => pass.paymentStatus === "payment_required").length;
-  }, [activePasses]);
+  const unpaidCount = useMemo(() => {
+    return passes.filter((p) => p.paymentStatus === "payment_required").length;
+  }, [passes]);
+
+  const unitUsage = useMemo(() => {
+    const usageMap = new Map<string, number>();
+
+    passes.forEach((p) => {
+      const label = getUnitLabel(p);
+      usageMap.set(label, (usageMap.get(label) || 0) + 1);
+    });
+
+    return Array.from(usageMap.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [passes]);
 
   return (
     <Layout userType="security" onLogout={() => setLocation("/")}>
       <div className="space-y-6">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-2xl font-display font-bold">Security Dashboard</h1>
-            <p className="text-muted-foreground">Read-only access for {communityName}</p>
+            <h1 className="text-2xl font-display font-bold">Security Overview</h1>
+            <p className="text-muted-foreground">{communityName}</p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="text-sm text-muted-foreground">
-              Community Code: <span className="font-medium">{communityCode}</span>
-            </div>
-
-            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
-          </div>
+          <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>Active Passes</CardDescription>
-              <CardTitle className="text-3xl">{activePasses.length}</CardTitle>
+              <CardTitle className="text-sm font-medium">Active Passes</CardTitle>
             </CardHeader>
-            <CardContent className="flex items-center gap-2 text-muted-foreground">
-              <Shield className="h-4 w-4" />
-              <span>Currently valid visitor passes</span>
+            <CardContent>
+              <div className="text-3xl font-bold">{activePasses.length}</div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>Total Passes</CardDescription>
-              <CardTitle className="text-3xl">{passes.length}</CardTitle>
+              <CardTitle className="text-sm font-medium">Outstanding Payments</CardTitle>
             </CardHeader>
-            <CardContent className="flex items-center gap-2 text-muted-foreground">
-              <Car className="h-4 w-4" />
-              <span>All passes in this community</span>
+            <CardContent>
+              <div className="text-3xl font-bold text-destructive">{unpaidCount}</div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>Payment Required</CardDescription>
-              <CardTitle className="text-3xl">{paymentRequiredCount}</CardTitle>
+              <CardTitle className="text-sm font-medium">Total Passes (All Time)</CardTitle>
             </CardHeader>
-            <CardContent className="flex items-center gap-2 text-muted-foreground">
-              <BadgeDollarSign className="h-4 w-4" />
-              <span>Active passes pending payment</span>
+            <CardContent>
+              <div className="text-3xl font-bold">{passes.length}</div>
             </CardContent>
           </Card>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Pass Search</CardTitle>
-            <CardDescription>
-              Search by building, unit, plate, vehicle, color, pass type, or payment status
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="relative">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search passes..."
-                className="pl-9"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Pass History</CardTitle>
-            <CardDescription>View-only history of active and previous passes for this community</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="text-sm text-muted-foreground">Loading passes...</div>
-            ) : error ? (
-              <div className="text-sm text-red-600">Failed to load passes. Please try again.</div>
-            ) : filteredPasses.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No passes found.</div>
-            ) : (
-              <div className="space-y-3">
-                {filteredPasses.map((pass) => {
-                  const active = isPassActive(pass);
-
-                  return (
-                    <div
-                      key={pass.id}
-                      className="rounded-xl border p-4 transition-colors hover:bg-muted/40"
-                    >
-                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-lg font-semibold tracking-wide">
-                              {pass.vehicleSnapshot.licensePlate}
-                            </span>
-                            {getStatusBadge(pass)}
-                            {getTypeBadge(pass)}
-                          </div>
-
-                          <div className="text-sm text-muted-foreground">
-                            {pass.vehicleSnapshot.make} {pass.vehicleSnapshot.model} • {pass.vehicleSnapshot.color}
-                            {pass.vehicleSnapshot.nickname ? ` • ${pass.vehicleSnapshot.nickname}` : ""}
-                          </div>
-
-                          <div className="grid gap-1 text-sm text-muted-foreground md:grid-cols-2">
-                            <div className="flex items-center gap-2">
-                              <Building2 className="h-4 w-4" />
-                              <span>
-                                Building {pass.buildingNumber ?? "?"} • Unit {pass.unitNumber ?? "?"}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <Clock3 className="h-4 w-4" />
-                              <span>
-                                Created: {format(parseISO(pass.createdAt), "MMM d, yyyy h:mm a")}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <Shield className="h-4 w-4" />
-                              <span>
-                                Expires: {format(parseISO(pass.expiresAt), "MMM d, yyyy h:mm a")}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <BadgeDollarSign className="h-4 w-4" />
-                              <span>Payment: {pass.paymentStatus.replaceAll("_", " ")}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="text-sm md:text-right">
-                          <div className="font-medium">{active ? "Valid Now" : "Expired"}</div>
-                          {typeof pass.price === "number" && pass.price > 0 ? (
-                            <div className="text-muted-foreground">${pass.price.toFixed(2)}</div>
-                          ) : (
-                            <div className="text-muted-foreground">No charge</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+        <div className="grid lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-4">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search plate, unit, make, model..."
+                  className="pl-9"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
               </div>
-            )}
-          </CardContent>
-        </Card>
+
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Filter Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Passes</SelectItem>
+                  <SelectItem value="active">Active Only</SelectItem>
+                  <SelectItem value="expired">Expired Only</SelectItem>
+                  <SelectItem value="unpaid">Unpaid Only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Card>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Unit</TableHead>
+                    <TableHead>Vehicle</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead>Expires</TableHead>
+                    <TableHead>Payment</TableHead>
+                  </TableRow>
+                </TableHeader>
+
+                <TableBody>
+                  {isLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8">
+                        Loading...
+                      </TableCell>
+                    </TableRow>
+                  ) : filteredPasses.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8">
+                        No passes found
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredPasses.slice(0, 25).map((pass) => (
+                      <TableRow key={pass.id}>
+                        <TableCell className="font-medium">
+                          {getUnitLabel(pass)}
+                        </TableCell>
+
+                        <TableCell>
+                          <div className="font-mono">{pass.vehicleSnapshot.licensePlate}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {pass.vehicleSnapshot.make} {pass.vehicleSnapshot.model}
+                          </div>
+                        </TableCell>
+
+                        <TableCell>
+                          {isPassActive(pass) ? (
+                            <Badge className="bg-green-500 hover:bg-green-500">Active</Badge>
+                          ) : (
+                            <Badge variant="outline">Expired</Badge>
+                          )}
+                        </TableCell>
+
+                        <TableCell className="text-xs">
+                          {format(parseISO(pass.createdAt), "MM/dd HH:mm")}
+                        </TableCell>
+
+                        <TableCell className="text-xs text-muted-foreground">
+                          {format(parseISO(pass.expiresAt), "MM/dd HH:mm")}
+                        </TableCell>
+
+                        <TableCell>
+                          {pass.type === "free" ? (
+                            <Badge variant="secondary">Free</Badge>
+                          ) : pass.type === "party" ? (
+                            <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100 border-purple-200">
+                              Party
+                            </Badge>
+                          ) : (
+                            <Badge variant={pass.paymentStatus === "paid" ? "default" : "destructive"}>
+                              {pass.paymentStatus === "payment_required"
+                                ? `Due $${pass.price ?? 0}`
+                                : pass.paymentStatus}
+                            </Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </Card>
+          </div>
+
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Units (Usage)</CardTitle>
+              </CardHeader>
+              <CardContent className="h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={unitUsage} layout="vertical" margin={{ left: 20 }}>
+                    <XAxis type="number" hide />
+                    <YAxis dataKey="name" type="category" width={90} tick={{ fontSize: 12 }} />
+                    <Tooltip cursor={{ fill: "transparent" }} />
+                    <Bar dataKey="count" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} barSize={20} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       </div>
     </Layout>
   );
