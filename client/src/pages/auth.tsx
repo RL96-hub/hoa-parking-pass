@@ -38,16 +38,19 @@ export default function AuthPage() {
 
   const residentForm = useForm<z.infer<typeof residentSchema>>({
     resolver: zodResolver(residentSchema),
+	mode: "onChange",
     defaultValues: { communityCode: "", buildingNumber: "", unitNumber: "", accessCode: "" },
   });
 
   const securityForm = useForm<z.infer<typeof securitySchema>>({
     resolver: zodResolver(securitySchema),
+	mode: "onChange",
     defaultValues: { communityCode: "", password: "" },
   });
   
   const adminForm = useForm<z.infer<typeof adminSchema>>({
   resolver: zodResolver(adminSchema),
+  mode: "onChange",
   defaultValues: { communityCode: "", password: "" },
   });
 
@@ -174,6 +177,27 @@ export default function AuthPage() {
     </div>
   );
 
+	const residentValues = residentForm.watch();
+	const securityValues = securityForm.watch();
+	const adminValues = adminForm.watch();
+
+	const isResidentReady =
+	  !!residentValues.communityCode?.trim() &&
+	  !!residentValues.buildingNumber?.trim() &&
+	  !!residentValues.unitNumber?.trim() &&
+	  !!residentValues.accessCode?.trim() &&
+	  residentForm.formState.isValid;
+
+	const isSecurityReady =
+	  !!securityValues.communityCode?.trim() &&
+	  !!securityValues.password?.trim() &&
+	  securityForm.formState.isValid;
+
+	const isAdminReady =
+	  !!adminValues.communityCode?.trim() &&
+	  !!adminValues.password?.trim() &&
+	  adminForm.formState.isValid;
+
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
       <div className="hidden lg:flex flex-col justify-between p-12 relative overflow-hidden bg-primary/5 text-primary-foreground">
@@ -291,7 +315,7 @@ export default function AuthPage() {
                         )}
                       />
 
-                      <Button type="submit" className="w-full" disabled={isLoading}>
+                      <Button type="submit" className="w-full" disabled={isLoading || !isResidentReady}>
                         {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Sign In"}
                       </Button>
                     </form>
@@ -348,7 +372,7 @@ export default function AuthPage() {
                         )}
                       />
 
-                      <Button type="submit" variant="secondary" className="w-full" disabled={isLoading}>
+                      <Button type="submit" className="w-full" disabled={isLoading || !isSecurityReady}>
                         {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Access Security Panel"}
                       </Button>
                     </form>
@@ -405,7 +429,7 @@ export default function AuthPage() {
 						)}
 					  />
 
-					  <Button type="submit" variant="default" className="w-full" disabled={isLoading}>
+					  <Button type="submit" className="w-full" disabled={isLoading || !isAdminReady}>
 						{isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Access Admin Panel"}
 					  </Button>
 					</form>
